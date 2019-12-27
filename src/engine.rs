@@ -52,6 +52,7 @@ pub(crate) enum Step {
     Assign(VariableName, Expr),
     Conditional(Expr, Vec<Step>, Vec<(Expr, Vec<Step>)>, Vec<Step>),
     Jump(NodeName),
+    DialogueAndJump(String, Vec<Choice>, NodeName),
 }
 
 #[derive(Debug, PartialEq)]
@@ -369,21 +370,27 @@ impl NodeState {
         self.conversation.take().expect("missing conversation")
     }
 
-    fn get_current_step(&self, conversation: &Conversation) -> (&Vec<Step>, usize) {
+    fn get_current_step(&self, conversation: &mut Conversation) -> (&Vec<Step>, usize) {
         let mut steps = {
             let current = self.nodes.0.get(&conversation.node).expect("missing node");
             &current.steps
         };
         let mut current_step_index = conversation.base_index;
 
+        let mut do_pop = false;
         for index in &conversation.indexes {
             match (&steps[current_step_index], *index) {
                 (&Step::Dialogue(_, ref choices), StepIndex::Dialogue(choice, step_index)) => {
                     let choice = &choices[choice];
                     match choice.kind {
                         ChoiceKind::Inline(ref choice_steps, _) => {
-                            steps = choice_steps;
-                            current_step_index = step_index;
+                            if choice_steps.len() > step_index {
+                                steps = choice_steps;
+                                current_step_index = step_index;
+                            } else {
+                                current_step_index += 1;
+                                do_pop = true;
+                            }
                         }
                         ChoiceKind::External(..) => unreachable!(),
                     }
@@ -402,6 +409,14 @@ impl NodeState {
                 }
                 _ => unreachable!(),
             }
+        }
+        if (do_pop) {
+            conversation.indexes.pop();
+        }
+
+        if conversation.indexes.len() == 0 {
+            conversation.base_index = current_step_index;
+            
         }
 
         (steps, current_step_index)
@@ -442,7 +457,8 @@ impl YarnEngine {
     /// Parse the provided string as a series of Yarn nodes, appending the results to
     /// the internal node storage. Returns Ok if parsing succeeded, Err otherwise.
     pub fn load_from_string(&mut self, s: &str) -> Result<(), ()> {
-        let nodes = parse::parse_nodes_from_string(s)?;
+        let st = s.replace("\r", "");
+        let nodes = parse::parse_nodes_from_string(&st)?;
         for node in nodes {
             self.state.nodes.0.insert(node.title.clone(), node);
         }
@@ -484,7 +500,7 @@ impl YarnEngine {
     pub fn choose(&mut self, choice: usize) {
         let conversation = {
             let mut conversation = self.state.take_conversation();
-            let (steps, current_step_index) = self.state.get_current_step(&conversation);
+            let (steps, current_step_index) = self.state.get_current_step(&mut conversation);
             match steps[current_step_index] {
                 Step::Dialogue(_, ref choices) => {
                     match choices[choice].kind {
@@ -494,7 +510,7 @@ impl YarnEngine {
                         }
                     }
                 }
-                Step::Command(..) | Step::Assign(..) | Step::Conditional(..) | Step::Jump(..) =>
+                Step::Command(..) | Step::Assign(..) | Step::Conditional(..) | Step::Jump(..) | Step::DialogueAndJump(..)=>
                     unreachable!(),
             }
             conversation
@@ -511,7 +527,7 @@ impl YarnEngine {
 
     fn do_proceed_one_step(&mut self) -> (Conversation, ExecutionStatus) {
         let mut conversation = self.state.take_conversation();
-        let (steps, current_step_index) = self.state.get_current_step(&conversation);
+        let (steps, current_step_index) = self.state.get_current_step(&mut conversation);
 
         if current_step_index >= steps.len() {
             self.handler.end_conversation();
@@ -563,6 +579,7 @@ impl YarnEngine {
                 conversation.reset((*name).clone());
                 (false, ExecutionStatus::Continue)
             }
+            Step::DialogueAndJump(_, _, _) => unreachable!(),
         };
 
         if advance {
