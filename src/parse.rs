@@ -20,7 +20,7 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
             Expr::Term(Term::Boolean(false))
         }
         Token::Word(ref w) => {
-            println!("function? {}", w);
+            //println!("function? {}", w);
             match tokenizer.next().ok_or(())? {
                 Token::LeftParenthesis => (),
                 _ => return Err(()),
@@ -39,9 +39,9 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
                     break;
                 }
                 args.push(parse_expr(tokenizer)?);
-                println!("arg: {:?}", args.last().unwrap());
+                //println!("arg: {:?}", args.last().unwrap());
             }
-            println!("function with {} args", args.len());
+            //println!("function with {} args", args.len());
             Expr::Term(Term::Function(w.to_string(), args))
         }
         Token::Quote => {
@@ -234,7 +234,6 @@ fn try_parse_option(tokenizer: &mut TokenIterator, indent: u32) -> Result<Option
     }
     if t == '[' || t == '-' {
         let (_indent, line) = parse_line(tokenizer)?;
-        
         match line {
             Line::Option(Some(text), name) => Ok(Some(DialogueOption::External(text, name))),
             Line::Option(None, name) => { Ok(Some(DialogueOption::Jump(name))) },
@@ -303,16 +302,16 @@ fn parse_conditional(tokenizer: &mut TokenIterator, indent: u32) -> Result<Condi
 fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -> Result<Step, ()> {
     match line {
         Line::Dialogue(s) => {
-            println!("found dialogue '{}'", s);
+            //println!("found dialogue '{}'", s);
             let mut choices = vec![];
             loop {
                 let opt = try_parse_option(tokenizer, indent)?;
-                println!("found opt {:?} with indent {}", opt, indent);
+                //println!("found opt {:?} with indent {}", opt, indent);
                 match opt {
                     Some(DialogueOption::Inline(text, condition)) => {
-                        println!("peeking after inline opt: {:?}" ,tokenizer.peek());
+                        //println!("peeking after inline opt: {:?}" ,tokenizer.peek());
                         let this_indent = tokenizer.last_indent();
-                        println!("this indent: {}", this_indent);
+                        //println!("this indent: {}", this_indent);
                         let mut steps = vec![];
                         loop {
                             if tokenizer.peek().is_none() 
