@@ -175,6 +175,7 @@ fn do_parse_line(token: Token, tokenizer: &mut TokenIterator) -> Result<Line, ()
             if tokenizer.next().ok_or(())? != Token::RightBracket {
                 return Err(());
             }
+            tokenizer.remainder_of_line();
             let mut parts = contents.split('|');
             let first = parts.next().unwrap();
             let second = parts.next();
@@ -191,9 +192,9 @@ fn do_parse_line(token: Token, tokenizer: &mut TokenIterator) -> Result<Line, ()
             let (text, cond) = match rest.find("<<") {
                 Some(idx) => {
                     let remainder = &rest[idx + 2..].trim();
-                    if !remainder.starts_with("if ") {
+                    /* if !remainder.starts_with("if ") {
                         return Err(());
-                    }
+                    } */
                     let end = remainder.find(">>").ok_or(())?;
                     (rest[..idx].trim().to_string(), Some(remainder[3..end].trim().to_string()))
                 }
@@ -220,6 +221,7 @@ fn parse_string_until(tokenizer: &mut TokenIterator, until: char) -> Result<Stri
 enum DialogueOption {
     Inline(String, Option<String>),
     External(String, NodeName),
+    Jump(NodeName),
 }
 
 fn try_parse_option(tokenizer: &mut TokenIterator, indent: u32) -> Result<Option<DialogueOption>, ()> {
@@ -232,8 +234,10 @@ fn try_parse_option(tokenizer: &mut TokenIterator, indent: u32) -> Result<Option
     }
     if t == '[' || t == '-' {
         let (_indent, line) = parse_line(tokenizer)?;
+        
         match line {
             Line::Option(Some(text), name) => Ok(Some(DialogueOption::External(text, name))),
+            Line::Option(None, name) => { Ok(Some(DialogueOption::Jump(name))) },
             Line::InlineOption(s, condition) => Ok(Some(DialogueOption::Inline(s, condition))),
             _ => unreachable!(),
         }
@@ -311,14 +315,17 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
                         println!("this indent: {}", this_indent);
                         let mut steps = vec![];
                         loop {
-                            if tokenizer.peek().is_none() || tokenizer.last_indent() < this_indent {
+                            if tokenizer.peek().is_none() 
+                            || tokenizer.last_indent() < this_indent 
+                            || (tokenizer.last_indent() == 0 && this_indent == 0)
+                            || (tokenizer.last_indent() == this_indent && tokenizer.peek() == Some('-')) {
                                 break;
                             }
                             steps.push(parse_step(tokenizer)?);
                         }
                         let condition = match condition {
-                            Some(c) => {
-                                let mut expr_tokenizer = TokenIterator::new(&c);
+                            Some(cb) => {
+                                let mut expr_tokenizer = TokenIterator::new(&cb);
                                 Some(parse_expr(&mut expr_tokenizer)?)
                             }
                             None => None,
@@ -327,6 +334,9 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
                     }
                     Some(DialogueOption::External(text, node)) => {
                         choices.push(Choice::external(text, node));
+                    }
+                    Some(DialogueOption::Jump(node)) => {
+                        return Ok(Step::DialogueAndJump(s, choices, node));
                     }
                     None => break,
                 }
@@ -347,7 +357,8 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
                 let rest = &s[4..].trim();
                 let var_end = rest.find(' ').ok_or(())?;
                 let var = &rest[0..var_end];
-                let mut tokenizer = TokenIterator::new(&rest[var_end..]);
+                let var_end_end = 1 + var_end + rest[(var_end+1)..].find(' ').ok_or(())?;
+                let mut tokenizer = TokenIterator::new(&rest[var_end_end..]);
                 let expr = parse_expr(&mut tokenizer)?;
                 return Ok(Step::Assign(VariableName(var.to_string()), expr));
             }
@@ -384,7 +395,16 @@ pub(crate) fn parse_node_contents(tokenizer: &mut TokenIterator) -> Result<Vec<S
                 }
                 return Ok(steps);
             }
-            _ => steps.push(parse_step(tokenizer)?),
+            _ => {
+                let step = parse_step(tokenizer)?;
+                match step {
+                    Step::DialogueAndJump(s, choices, name) => {
+                        steps.push(Step::Dialogue(s, choices));
+                        steps.push(Step::Jump(name));
+                    },
+                    _ => steps.push(step),
+                }
+            }
         }
     }
 }
